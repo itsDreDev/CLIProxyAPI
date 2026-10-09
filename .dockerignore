@@ -39,3 +39,10 @@ bin
 .bmad
 _bmad
 _bmad-output
+gui/node_modules
+gui/.next
+gui/out
+gui/test-results
+gui/playwright-report
+gui/tsconfig.tsbuildinfo
+internal/subscriptiongui/web

@@ -1,3 +1,14 @@
+FROM node:24-bookworm-slim AS gui-builder
+
+WORKDIR /app
+
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY gui/package.json gui/package-lock.json ./gui/
+RUN npm ci --prefix gui --no-audit --no-fund
+COPY gui ./gui
+RUN npm run build --prefix gui
+
 FROM golang:1.26-bookworm AS builder
 
 WORKDIR /app
@@ -9,6 +20,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+COPY --from=gui-builder /app/internal/subscriptiongui/web ./internal/subscriptiongui/web
 
 ARG VERSION=dev
 ARG COMMIT=none

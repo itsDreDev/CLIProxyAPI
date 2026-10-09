@@ -17,9 +17,31 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Set up Node.js for Subscription Desk
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - name: Build Subscription Desk
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --prefix gui
+          npm run build --prefix gui
+      - name: Test frontend API contracts
+        run: npm test --prefix gui
       - name: Refresh models catalog
         run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Build
         run: |
           go build -o test-output ./cmd/server
           rm -f test-output
+      - name: Test Go packages
+        run: go test ./...
+      - name: Build browser test binary
+        run: go build -o cli-proxy-api ./cmd/server
+      - name: Install test browser
+        run: cd gui && npx playwright install --with-deps chromium
+      - name: Test Subscription Desk in browser
+        run: npm run test:e2e --prefix gui

@@ -131,6 +131,18 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Set up Node.js for Subscription Desk
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - name: Build Subscription Desk
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --prefix gui
+          npm run build --prefix gui
       - name: Refresh models catalog
         shell: bash
         run: bash .github/scripts/refresh-model-catalogs.sh
@@ -258,6 +270,18 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Set up Node.js for Subscription Desk
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - name: Build Subscription Desk
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --prefix gui
+          npm run build --prefix gui
       - name: Refresh models catalog
         shell: bash
         run: bash .github/scripts/refresh-model-catalogs.sh
@@ -390,6 +414,18 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Set up Node.js for Subscription Desk
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - name: Build Subscription Desk
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --prefix gui
+          npm run build --prefix gui
       - name: Refresh models catalog
         shell: bash
         run: bash .github/scripts/refresh-model-catalogs.sh
@@ -518,6 +554,18 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Set up Node.js for Subscription Desk
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - name: Build Subscription Desk
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --prefix gui
+          npm run build --prefix gui
       - name: Refresh models catalog
         run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Fetch tags

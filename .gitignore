@@ -22,6 +22,14 @@ objectstore/*
 
 # Static assets
 static/*
+/gui/node_modules/
+/gui/.next/
+/gui/out/
+/gui/tsconfig.tsbuildinfo
+/gui/test-results/
+/gui/playwright-report/
+/internal/subscriptiongui/web/*
+!/internal/subscriptiongui/web/.keep
 
 # Authentication data
 auths/*
