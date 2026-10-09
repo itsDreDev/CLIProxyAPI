@@ -56,7 +56,11 @@ async function mockProviders(context: BrowserContext) {
       account.status = data.disabled ? 'disabled' : 'active';
     } else if (path === '/credentials/models') result = { models: [{ id: 'example-model' }] };
     else if (path === '/credentials' && request.method() === 'DELETE') state.accounts = state.accounts.filter(value => value.name !== url.searchParams.get('name'));
-    else if (path === '/oauth/auth-url') { result = { state: 'qa-state', url: 'https://example.com/authorize' }; state.oauthStatus = 'wait'; }
+    else if (path === '/oauth/auth-url') {
+      expect(url.searchParams.get('is_webui')).toBe('true');
+      result = { state: 'qa-state', url: 'https://example.com/authorize' };
+      state.oauthStatus = 'wait';
+    }
     else if (path === '/oauth/status') result = { status: state.oauthStatus };
     else if (path === '/oauth/callback') { expect(JSON.parse(body!).code).toBe('qa-code'); state.oauthStatus = 'ok'; }
     else if (path === '/config') result = { routing: { strategy: 'round-robin' }, access: { 'api-keys': ['fake-client-key'] } };
@@ -202,4 +206,59 @@ test('hidden tabs suspend polling and becoming visible revalidates immediately',
   });
   await expect(page.locator('#stat-total')).toHaveText('2');
   expect(state.accountReads).toBeGreaterThan(reads);
+});
+
+test('shared HTTPS origin keeps management authentication and uses manual OAuth callbacks', async ({ page, context, proxyURL }) => {
+  const gateway = 'https://proxy.example.ts.net';
+  const oauthQueries: string[] = [];
+  await context.route(`${gateway}/**`, async route => {
+    const incoming = new URL(route.request().url());
+    if (incoming.pathname === '/v8/management/oauth/auth-url') {
+      expect(incoming.searchParams.get('is_webui')).toBe('false');
+      oauthQueries.push(incoming.searchParams.get('provider')!);
+      await route.fulfill({ json: { state: 'remote-state', url: 'https://example.com/authorize' } });
+    } else if (incoming.pathname === '/v8/management/oauth/status') {
+      await route.fulfill({ json: { status: 'wait' } });
+    } else if (incoming.pathname === '/v8/management/oauth/session') {
+      await route.fulfill({ json: {} });
+    } else {
+      const response = await route.fetch({
+        url: `${proxyURL}${incoming.pathname}${incoming.search}`,
+        headers: {
+          ...route.request().headers(),
+          'x-forwarded-for': '100.64.0.12',
+          'x-forwarded-host': 'proxy.example.ts.net',
+          'x-forwarded-proto': 'https',
+        },
+      });
+      await route.fulfill({ response });
+    }
+  });
+  await context.route('https://example.com/**', route => route.fulfill({ body: '<p>Simulated provider sign-in</p>', contentType: 'text/html' }));
+  await page.goto(`${gateway}/subscriptions/`);
+  expect(await page.evaluate(() => location.origin)).toBe(gateway);
+  const responses = await page.evaluate(async key => {
+    const url = '/v8/management/credentials';
+    const missing = await fetch(url);
+    const accepted = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
+    return { missing: missing.status, accepted: accepted.status };
+  }, managementKey);
+  expect(responses).toEqual({ missing: 401, accepted: 200 });
+  await page.locator('#management-key').fill(managementKey);
+  await page.locator('#unlock-form button[type="submit"]').click();
+  await expect(page.locator('#unlock-dialog')).toBeHidden();
+  for (const provider of ['codex', 'claude']) {
+    await page.locator(`[data-connect="${provider}"]`).first().click();
+    await expect(page.locator('#oauth-dialog')).toBeVisible();
+    await expect(page.locator('#remote-oauth-guidance')).toContainText(/localhost/i);
+    await expect(page.locator('#remote-oauth-guidance')).toContainText(/paste|callback/i);
+    await page.locator('#cancel-oauth').click();
+    await expect(page.locator('#oauth-dialog')).toBeHidden();
+  }
+  expect(oauthQueries).toEqual(['codex', 'claude']);
+  await page.locator('[data-page="settings"]').click();
+  await expect(page.locator('#dashboard-origin')).toHaveText(gateway);
+  await expect(page.locator('#proxy-origin')).toHaveText(gateway);
+  await expect(page.locator('#api-endpoint')).toHaveText(`${gateway}/v1`);
+  await expect(page.locator('#tailscale-https')).toBeVisible();
 });

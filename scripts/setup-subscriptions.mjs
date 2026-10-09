@@ -14,6 +14,9 @@ config-version: 8
 server:
   host: "127.0.0.1"
   port: 8317
+  trusted-proxies: []
+  tls:
+    enable: false
 management:
   allow-remote: false
   secret-key: "${secret()}"

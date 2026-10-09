@@ -3,6 +3,7 @@
 This fork includes **Subscription Desk**, a bundled Next.js GUI for managing
 ChatGPT and Claude subscription accounts. See [setup and usage](SUBSCRIPTION_GUI.md),
 then open `http://127.0.0.1:8317/subscriptions/` while the proxy is running.
+For multiple computers, use the [one shared proxy through Tailscale setup](SUBSCRIPTION_GUI.md#one-shared-proxy-through-tailscale).
 
 English | [中文](README_CN.md) | [日本語](README_JA.md)
 

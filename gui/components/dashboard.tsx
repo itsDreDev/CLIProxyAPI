@@ -11,8 +11,10 @@ import {
 import {
   accountStatus,
   callbackPayload,
+  oauthConnectionMode,
   providerOf,
   totals,
+  type OAuthConnectionMode,
 } from "../lib/accounts";
 import type {
   Account,
@@ -64,6 +66,14 @@ const statusOf = (error: unknown) =>
   error && typeof error === "object" && "status" in error
     ? error.status
     : undefined;
+
+const currentConnectionMode = () =>
+  oauthConnectionMode(
+    window.location.origin,
+    process.env.NODE_ENV === "development"
+      ? process.env.NEXT_PUBLIC_API_ORIGIN
+      : undefined,
+  );
 
 function Modal({
   name,
@@ -137,6 +147,7 @@ export function Dashboard() {
   const query = useAccounts();
   const invalidateAccounts = useInvalidateAccounts();
   const [page, setPage] = useState<Page>("accounts");
+  const [network, setNetwork] = useState<OAuthConnectionMode | null>(null);
   const [dialog, setDialog] = useState<DialogName>("unlock");
   const [key, setKey] = useState("");
   const [unlockError, setUnlockError] = useState("");
@@ -167,6 +178,18 @@ export function Dashboard() {
         .toLowerCase()
         .includes(search.trim().toLowerCase()),
   );
+
+  useEffect(() => {
+    try {
+      setNetwork(currentConnectionMode());
+    } catch {
+      setToast({
+        message:
+          "The proxy API origin is invalid. Check the dashboard configuration.",
+        error: true,
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const update = () => {
@@ -306,7 +329,7 @@ export function Dashboard() {
       let created: { url: string; state: string } | undefined;
       try {
         created = await api.request<{ url: string; state: string }>(
-          `/oauth/auth-url?provider=${provider}&is_webui=true`,
+          `/oauth/auth-url?provider=${provider}&is_webui=${currentConnectionMode().isWebUI}`,
         );
         const url = new URL(created.url);
         if (
@@ -430,7 +453,9 @@ export function Dashboard() {
         ? `${messageOf(oauth.error)} Retrying…`
         : callbackReceived
           ? "Callback received. Waiting for the proxy to save your credentials…"
-          : "Complete sign-in in the new tab. This page updates automatically every 1.5 seconds.";
+          : network?.remote
+            ? "Finish sign-in in the new tab, then paste the complete callback URL or Claude code#state below. This page checks completion automatically every 1.5 seconds."
+            : "Complete sign-in in the new tab. This page updates automatically every 1.5 seconds.";
 
   return (
     <>
@@ -448,7 +473,10 @@ export function Dashboard() {
         <div className="workspace">
           <span className="workspace-icon">P</span>
           <div>
-            Personal workspace<small>CLIProxyAPI / local</small>
+            Personal workspace
+            <small>
+              CLIProxyAPI / {network?.remote ? "shared host" : "local"}
+            </small>
           </div>
           <span className="local-dot" />
         </div>
@@ -476,15 +504,23 @@ export function Dashboard() {
         </nav>
         <div className="sidebar-bottom">
           <div className="privacy-icon">◈</div>
-          <strong>Your accounts, on your machine.</strong>
+          <strong>
+            {network?.remote
+              ? "Credentials stay on the proxy host."
+              : "Your accounts, on your machine."}
+          </strong>
           <p>
             Sign in with your subscriptions.
             <br />
-            Keep credentials in your local proxy.
+            {network?.remote
+              ? "Use one shared proxy across your devices."
+              : "Keep credentials in your local proxy."}
           </p>
           <a href="/management.html">Advanced management ↗</a>
           <div className="version">
-            <span className="local-dot" /> Local dashboard <span>v1.0</span>
+            <span className="local-dot" />{" "}
+            {network?.remote ? "Shared dashboard" : "Local dashboard"}{" "}
+            <span>v1.0</span>
           </div>
         </div>
       </aside>
@@ -851,7 +887,7 @@ export function Dashboard() {
                     : "Waiting for connection"}
                 </span>
                 <span>
-                  Credentials stay with your proxy{" "}
+                  Credentials stay on the proxy host{" "}
                   <span className="local-dot" />
                 </span>
               </div>
@@ -984,6 +1020,7 @@ export function Dashboard() {
                 notify={notify}
                 run={run}
                 busy={busy}
+                network={network}
               />
             ) : (
               <div className="account-panel settings-card">
@@ -1097,6 +1134,15 @@ export function Dashboard() {
           >
             {oauthMessage}
           </p>
+          {network?.remote && (
+            <div id="remote-oauth-guidance" className="notice" role="note">
+              This proxy runs on another host. After sign-in, a redirect to
+              localhost refers to this browsing device and may fail to load.
+              Copy the complete callback URL from that tab&apos;s address bar
+              and paste it below, or paste the Claude authorization{" "}
+              <code>code#state</code>.
+            </div>
+          )}
           {toast?.error && (
             <div className="error" role="alert">
               {toast.message}
@@ -1131,6 +1177,9 @@ export function Dashboard() {
             </label>
             <input
               id="callback-input"
+              aria-describedby={
+                network?.remote ? "remote-oauth-guidance" : undefined
+              }
               type="text"
               autoComplete="off"
               placeholder="Paste the returned URL or code"
@@ -1243,7 +1292,8 @@ export function Dashboard() {
             </div>
             <h2 id="remove-title">Remove this account?</h2>
             <p id="remove-description">
-              Disconnect {identity(selected)} from your local proxy.
+              Disconnect {identity(selected)} from your{" "}
+              {network?.remote ? "shared" : "local"} proxy.
             </p>
             <p>
               The stored credential file will be deleted. You can sign in again
@@ -1315,20 +1365,19 @@ function Settings({
   notify,
   run,
   busy,
+  network,
 }: {
   enabled: boolean;
   notify: (message: string, error?: boolean) => void;
   run: (name: string, action: () => Promise<void>) => Promise<void>;
   busy: Set<string>;
+  network: OAuthConnectionMode | null;
 }) {
   const { api } = useDesk();
   const query = useSettings(enabled);
   const [strategy, setStrategy] = useState("round-robin");
   const [keys, setKeys] = useState<string[]>([]);
-  const [endpoint, setEndpoint] = useState("");
-  useEffect(() => {
-    setEndpoint(`${process.env.NEXT_PUBLIC_API_ORIGIN || window.location.origin}/v1`);
-  }, []);
+  const endpoint = network ? `${network.proxyOrigin}/v1` : "";
   useEffect(() => {
     if (query.data) {
       setStrategy(query.data.routing?.strategy || "round-robin");
@@ -1359,7 +1408,9 @@ function Settings({
       )}
       <div className="settings-layout">
         <section className="account-panel settings-card">
-          <h2>Local API endpoint</h2>
+          <h2>
+            {network?.remote ? "Shared API endpoint" : "Local API endpoint"}
+          </h2>
           <p>Use this base URL in an OpenAI-compatible client.</p>
           <div className="copy-field">
             <code id="api-endpoint">{endpoint}</code>
@@ -1375,6 +1426,40 @@ function Settings({
           <p className="muted">
             Use a client API key below. The dashboard management key is
             separate.
+          </p>
+        </section>
+        <section
+          className="account-panel settings-card network-card"
+          id="network-card"
+        >
+          <h2>Proxy host & devices</h2>
+          <p>
+            {network?.remote
+              ? "One shared proxy serves your devices. Use the same API endpoint above on every computer; accounts and routing are managed on that proxy host."
+              : "This browser connects to a proxy on this computer. To use one shared proxy from other devices, open its shared hostname and use that host's API endpoint."}
+          </p>
+          <dl className="details-list">
+            <dt>Dashboard origin</dt>
+            <dd>
+              <code id="dashboard-origin">
+                {network?.dashboardOrigin || "Loading…"}
+              </code>
+            </dd>
+            <dt>Proxy origin</dt>
+            <dd>
+              <code id="proxy-origin">
+                {network?.proxyOrigin || "Loading…"}
+              </code>
+            </dd>
+          </dl>
+          {network?.tailscaleHTTPS && (
+            <p id="tailscale-https" className="network-status">
+              <span className="local-dot" /> Tailscale HTTPS hostname detected
+            </p>
+          )}
+          <p className="muted">
+            Your management key stays in this tab&apos;s memory. Subscription
+            credentials stay on the proxy host.
           </p>
         </section>
         <form
@@ -1421,7 +1506,10 @@ function Settings({
         </form>
         <section className="account-panel settings-card">
           <h2>Client API keys</h2>
-          <p>These keys let your tools call the local proxy.</p>
+          <p>
+            These keys let your tools call the{" "}
+            {network?.remote ? "shared" : "local"} proxy.
+          </p>
           <div id="client-keys" className="client-keys">
             {query.isPending ? (
               <p className="muted">Loading client API keys…</p>

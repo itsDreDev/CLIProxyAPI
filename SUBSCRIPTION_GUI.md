@@ -31,6 +31,116 @@ keys. It preserves any existing `config.yaml`. For an existing configuration,
 set a known `management.secret-key` before starting and ensure
 `management.disable-control-panel` is false. Use your configured server port.
 
+## One shared proxy through Tailscale
+
+Run this proxy on one computer that stays on. Sign into Tailscale on that host
+and each computer that will use it, using the same tailnet. Install the proxy
+only on the host; accounts, routing, activity, and credentials live there.
+Every connected device draws from the same provider account allowances.
+
+The setup script above creates the shared-host configuration:
+
+```yaml
+server:
+  host: "127.0.0.1"
+  port: 8317
+  trusted-proxies: []
+  tls:
+    enable: false
+management:
+  allow-remote: false
+```
+
+Keep your generated management and client keys. Tailscale Serve provides HTTPS
+and forwards the whole origin to localhost. Management still requires its key;
+the empty trusted-proxy list preserves the backend's loopback access check.
+The setup helper validates an existing configuration without rewriting it.
+Restart the proxy with that file after any configuration changes; the helper
+checks the file and dashboard availability, rather than inspecting the active
+process's listening interfaces.
+
+Start the proxy as described above, then in another terminal on the host:
+
+```sh
+tailscale up
+node scripts/tailscale-subscriptions.mjs enable
+```
+
+Tailscale may ask you to enable HTTPS for your tailnet. The helper prints the
+dashboard URL and client API base URL once Serve confirms the mapping. Open the
+dashboard URL from another Tailscale computer and unlock it with the management
+key. For OpenAI-compatible tools, use the printed `https://<host>.ts.net/v1`
+base URL and a client API key from Connection & routing. Tools using the native
+Anthropic protocol use the same HTTPS origin with their `/v1/messages` endpoint.
+There is no need to expose port 8317 on your LAN or install Node on client devices.
+
+Serve is private to your tailnet and its access rules. The helper never enables
+public Funnel, resets Serve, or overwrites another app's mapping. If HTTPS port
+443 is occupied, use `--https-port 8443`; the printed URLs include that port.
+Use `--config /path/to/config.yaml` for another configuration path. Setup requires
+the dependencies installed by `npm ci --prefix gui`.
+
+```sh
+node scripts/tailscale-subscriptions.mjs status
+node scripts/tailscale-subscriptions.mjs disable
+# With a custom port, use that same --https-port value for every command.
+```
+
+Disable uses the backend port in the supplied configuration to identify its
+mapping. If you moved the file, pass its new path with `--config`. If the backend
+port changed or the file was deleted, inspect `tailscale serve status` and remove
+the old mapping with `tailscale serve --https=443 off` (using its actual HTTPS
+port). That command removes everything served on the selected port, so check
+the mapping first.
+
+Status reports Tailscale state and configured mappings; it does not establish
+that the proxy or another computer is reachable. The background Serve mapping
+persists, while the proxy must keep running. On Linux, you can run the proxy
+under a user service by saving this as
+`~/.config/systemd/user/cliproxy-subscriptions.service`, replacing both checkout
+paths with your actual absolute path:
+
+```ini
+[Unit]
+Description=Shared subscription proxy
+After=network-online.target
+
+[Service]
+WorkingDirectory=/absolute/path/to/CLIProxyAPI
+ExecStart=/absolute/path/to/CLIProxyAPI/cli-proxy-api --config /absolute/path/to/CLIProxyAPI/config.yaml --local-model
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now cliproxy-subscriptions
+# Keep user services running after logout on the host:
+loginctl enable-linger "$USER"
+```
+
+Stop a foreground copy of the proxy before starting the service. Restrict
+tailnet access to the intended users/devices. Failed management-key attempts
+through Serve share the existing loopback rate-limit bucket, so repeated bad
+keys can temporarily block all dashboard operators. A `MANAGEMENT_PASSWORD`
+environment override changes the upstream management policy; the host's
+loopback listener remains the network boundary for this setup.
+
+When signing into ChatGPT or Claude from another computer, the dashboard uses
+manual completion. Finish provider sign-in, then paste the complete callback
+URL from the browser's address bar (even if its localhost page fails), or the
+Claude authorization code with its state, into the dashboard. The host completes
+the exchange and saves the credential. The provider's registered localhost
+redirect URI remains unchanged.
+
+See [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) and the
+[Serve CLI reference](https://tailscale.com/docs/reference/tailscale-cli/serve)
+for tailnet HTTPS and access setup.
+
 Docker builds and release pipelines build the frontend before compiling Go.
 Generated dashboard assets are ignored in Git; source is under `gui/`. A Go
 build made without the frontend export serves an explicit build instruction

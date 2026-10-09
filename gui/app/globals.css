@@ -1040,6 +1040,12 @@ dialog label,
   color: #8ea293;
   margin: 12px 0 20px;
 }
+.settings-card .network-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #b0dcb5;
+}
 .copy-field {
   display: flex;
   align-items: center;
