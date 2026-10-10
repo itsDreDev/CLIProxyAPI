@@ -3,6 +3,8 @@
 This fork adds a Next.js dashboard for ChatGPT (Codex OAuth) and Claude (Claude
 Code OAuth) subscriptions. The Go proxy serves the compiled dashboard at
 `/subscriptions/`; production runs as one binary without a Node.js server.
+The optional [Tauri desktop app](DESKTOP_APP.md) bundles this same server and
+dashboard with native tray and process controls.
 
 ## Build and start
 
