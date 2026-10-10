@@ -29,12 +29,31 @@ async function harness(run) {
   const config = join(directory, 'config.yaml');
   const stateFile = join(directory, 'state.json');
   const executable = join(directory, 'tailscale');
+  const dockerExecutable = join(directory, 'docker');
   await writeFile(config, `config-version: 8
 server: {host: '127.0.0.1', port: ${backendPort}}
 management: {secret-key: 'test-management-key', allow-remote: false, disable-control-panel: false}
 access: {api-keys: ['test-client-key']}
 `);
-  await writeFile(stateFile, JSON.stringify({ node: { BackendState: 'Running', Self: { DNSName: `${hostname}.` } }, serve: {}, calls: [] }));
+  await writeFile(stateFile, JSON.stringify({
+    node: { BackendState: 'Running', Self: { DNSName: `${hostname}.` } }, serve: {}, calls: [],
+    container: {
+      State: { Running: true }, HostConfig: { NetworkMode: 'host', PortBindings: {} },
+      Config: { Cmd: ['./CLIProxyAPI', '--config', '/CLIProxyAPI/config/config.yaml'], Env: [], User: `${process.getuid()}:${process.getgid()}` },
+      Mounts: [{ Type: 'bind', RW: true, Source: directory, Destination: '/CLIProxyAPI/config' }],
+    },
+  }));
+  await writeFile(dockerExecutable, `#!${process.execPath} --
+const fs = require('node:fs');
+const state = JSON.parse(fs.readFileSync(process.env.MOCK_TAILSCALE_STATE, 'utf8'));
+const args = process.argv.slice(2);
+state.dockerCalls ||= [];
+state.dockerCalls.push(args);
+if (args[0] === 'compose') console.log('test-proxy-container');
+else if (args[0] === 'inspect') console.log(JSON.stringify([state.container]));
+else process.exitCode = 1;
+fs.writeFileSync(process.env.MOCK_TAILSCALE_STATE, JSON.stringify(state));
+`, { mode: 0o700 });
   await writeFile(executable, `#!${process.execPath}
 const fs = require('node:fs');
 const state = JSON.parse(fs.readFileSync(process.env.MOCK_TAILSCALE_STATE, 'utf8'));
@@ -60,7 +79,7 @@ fs.writeFileSync(process.env.MOCK_TAILSCALE_STATE, JSON.stringify(state));
   const readState = async () => JSON.parse(await readFile(stateFile, 'utf8'));
   const update = async changes => writeFile(stateFile, JSON.stringify({ ...await readState(), ...changes }));
   const invoke = async (...args) => new Promise((resolveChild, reject) => {
-    const child = spawn(process.execPath, [script, ...args], { cwd: directory, env: { ...process.env, TAILSCALE_BIN: executable, MOCK_TAILSCALE_STATE: stateFile }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [script, ...args], { cwd: directory, env: { ...process.env, TAILSCALE_BIN: executable, DOCKER_BIN: dockerExecutable, MOCK_TAILSCALE_STATE: stateFile }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', data => { stdout += data; });
@@ -203,5 +222,42 @@ management: {<<: *defaults, secret-key: 'test-key'}
     assert.equal(refusedTLS.code, 1);
     assert.match(refusedTLS.stderr, /tls/i);
     assert.deepEqual(mutations(await readState()), []);
+  });
+});
+
+test('Docker sharing verifies the running host-network container and mounted profile', async () => {
+  await harness(async ({ invoke, config, readState }) => {
+    const enabled = await invoke('enable', '--docker', '--config', config);
+    assert.equal(enabled.code, 0, `${enabled.stderr}\nDocker calls: ${JSON.stringify((await readState()).dockerCalls)}`);
+    const state = await readState();
+    assert.equal(state.dockerCalls[0][0], 'compose');
+    assert.deepEqual(state.dockerCalls[1], ['inspect', 'test-proxy-container']);
+    assert.equal(mutations(state).length, 1);
+  });
+});
+
+test('Docker sharing refuses unsafe runtime differences before mutating Serve', async () => {
+  await harness(async ({ invoke, config, target, update, readState }) => {
+    const original = (await readState()).container;
+    const invalidContainers = [
+      { ...original, State: { Running: false } },
+      { ...original, HostConfig: { NetworkMode: 'bridge' } },
+      { ...original, HostConfig: { NetworkMode: 'host', PortBindings: { '8317/tcp': [{ HostIp: '0.0.0.0', HostPort: '8317' }] } } },
+      { ...original, Mounts: [{ ...original.Mounts[0], Source: '/wrong-profile' }] },
+      { ...original, Mounts: [{ ...original.Mounts[0], RW: false }] },
+      { ...original, Mounts: [{ ...original.Mounts[0], Source: config, Destination: '/CLIProxyAPI/config/config.yaml' }] },
+      { ...original, Config: { ...original.Config, Env: ['MANAGEMENT_PASSWORD=override'] } },
+      { ...original, Config: { ...original.Config, Env: ['pgstore_dsn=override'] } },
+      { ...original, Config: { ...original.Config, User: 'another-user' } },
+    ];
+    for (const container of invalidContainers) {
+      await update({ container, calls: [], serve: {} });
+      const result = await invoke('enable', '--docker', '--config', config);
+      assert.equal(result.code, 1, JSON.stringify(container));
+      assert.deepEqual(mutations(await readState()), [], result.stderr);
+    }
+    // Disabling an existing mapping remains available after the container stops.
+    await update({ container: invalidContainers[0], serve: mapping(target), calls: [] });
+    assert.equal((await invoke('disable', '--docker', '--config', config)).code, 0);
   });
 });

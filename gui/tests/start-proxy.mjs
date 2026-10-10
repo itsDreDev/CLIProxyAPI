@@ -9,6 +9,11 @@ export const managementKey = "subscription-gui-e2e-management-key";
 export const initialClientKey = "subscription-gui-e2e-client-key";
 
 export async function startProxy() {
+  if (process.env.SUBSCRIPTION_GUI_BASE_URL) {
+    const url = new URL(process.env.SUBSCRIPTION_GUI_BASE_URL);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('SUBSCRIPTION_GUI_BASE_URL must be an HTTP origin without credentials');
+    return { url: url.origin, stop: async () => {} };
+  }
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const listener = createServer();
   await new Promise((resolveListen, reject) => {

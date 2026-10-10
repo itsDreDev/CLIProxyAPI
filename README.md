@@ -1,15 +1,14 @@
 # CLI Proxy API
 
-This fork includes **Subscription Desk**, a bundled Next.js GUI for managing
-ChatGPT and Claude subscription accounts. See [setup and usage](SUBSCRIPTION_GUI.md),
-then open `http://127.0.0.1:8317/subscriptions/` while the proxy is running.
-For multiple computers, use the [one shared proxy through Tailscale setup](SUBSCRIPTION_GUI.md#one-shared-proxy-through-tailscale).
-The [native desktop app](DESKTOP_APP.md) adds a tray menu, proxy start/stop controls,
-and a connection mode for your shared Tailscale host.
+This fork includes **Subscription Desk**, a Next.js web dashboard for ChatGPT and
+Claude subscription accounts. Run it as one Docker app on a Linux host, then
+open the dashboard from your other computers through Tailscale.
+
+Start with the [Docker quickstart](SUBSCRIPTION_GUI.md#docker-quickstart) and
+[shared Tailscale access](SUBSCRIPTION_GUI.md#one-shared-proxy-through-tailscale).
+Saved accounts and configuration persist across container restarts and updates.
 
 English | [中文](README_CN.md) | [日本語](README_JA.md)
-
-If you want to use CLIProxyAPI on your desktop, we recommend our [EasyCLIProxyAPI](https://github.com/router-for-me/EasyCLIProxyAPI) desktop client. It provides a graphical configuration UI, automatic updates, system tray integration, and one-click start/stop for the CLIProxyAPI service.
 
 CLIProxyAPI is a proxy server that provides OpenAI/Gemini/Claude/Codex/Grok compatible API interfaces for CLI.
 

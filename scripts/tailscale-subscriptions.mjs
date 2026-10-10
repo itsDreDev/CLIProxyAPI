@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const execute = promisify(execFile);
 const cli = process.env.TAILSCALE_BIN || "tailscale";
+const dockerCli = process.env.DOCKER_BIN || "docker";
 
 async function tailscale(args) {
   try {
@@ -161,11 +162,60 @@ function validateProfile(config) {
     );
 }
 
+async function validateDocker(configPath, config) {
+  let containers;
+  try {
+    const { stdout } = await execute(dockerCli, [
+      "compose", "--project-directory", root, "--file", resolve(root, "docker-compose.yml"),
+      "--env-file", resolve(root, "docker-data/runtime.env"),
+      "ps", "--quiet", "cli-proxy-api",
+    ]);
+    const ids = stdout.trim().split(/\s+/).filter(Boolean);
+    if (ids.length !== 1) throw new Error("Expected one running proxy container.");
+    const inspected = await execute(dockerCli, ["inspect", ids[0]], { maxBuffer: 4 * 1024 * 1024 });
+    containers = JSON.parse(inspected.stdout);
+  } catch (error) {
+    throw new Error(`Start the Docker proxy first: docker compose --env-file docker-data/runtime.env up -d --build. Docker and its Compose plugin must be available on this Linux host (${error.code || error.name}).`);
+  }
+  const container = containers[0];
+  if (!container?.State?.Running || container.HostConfig?.NetworkMode !== "host") {
+    throw new Error("The Docker shared-host profile requires a running Linux host-network container.");
+  }
+  if (Object.keys(container.HostConfig?.PortBindings || {}).length) {
+    throw new Error("The host-network profile must not publish additional ports.");
+  }
+  const profileMetadata = await stat(configPath);
+  if (container.Config?.User !== `${profileMetadata.uid}:${profileMetadata.gid}`) {
+    throw new Error("The Docker proxy must run as the configuration file's host UID:GID to preserve private profile ownership.");
+  }
+  const command = container.Config?.Cmd || [];
+  const containerConfig = command[command.indexOf("--config") + 1];
+  if (!command.includes("--config") || typeof containerConfig !== "string" || !containerConfig.startsWith("/")) {
+    throw new Error("The running container must use an explicit mounted --config file.");
+  }
+  const mount = (container.Mounts || []).find((entry) =>
+    entry.Type === "bind" && entry.RW && entry.Destination === "/CLIProxyAPI/config" &&
+    containerConfig.startsWith(`${entry.Destination}/`),
+  );
+  if (!mount || resolve(mount.Source, `.${containerConfig.slice(mount.Destination.length)}`) !== resolve(configPath)) {
+    throw new Error("The selected configuration does not match the running container's writable config bind mount.");
+  }
+  const unsafeEnvironment = (container.Config?.Env || []).some((entry) => {
+    const separator = entry.indexOf("=");
+    const name = entry.slice(0, separator).toUpperCase();
+    return separator >= 0 && entry.slice(separator + 1) &&
+      (name === "MANAGEMENT_PASSWORD" || ["PGSTORE_", "GITSTORE_", "OBJECTSTORE_"].some((prefix) => name.startsWith(prefix)));
+  });
+  if (unsafeEnvironment) {
+    throw new Error("Remove management-password and external-storage environment overrides from the container before sharing this private profile.");
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === "--help" || args[0] === "-h") {
     console.log(
-      "Usage: node scripts/tailscale-subscriptions.mjs status|enable|disable [--config path] [--https-port 443]\nShares the whole proxy privately through Tailscale Serve. Never enables Funnel or resets other mappings.",
+      "Usage: node scripts/tailscale-subscriptions.mjs status|enable|disable [--docker] [--config path] [--https-port 443]\nShares the whole proxy privately through Tailscale Serve. Never enables Funnel or resets other mappings.",
     );
     return;
   }
@@ -174,16 +224,22 @@ async function main() {
     throw new Error(
       "Choose status, enable, or disable. Use --help for options.",
     );
-  let configPath = resolve(root, "config.yaml");
+  let configPath;
+  let docker = false;
   let httpsPort = 443;
   while (args.length) {
     const option = args.shift();
+    if (option === "--docker") {
+      docker = true;
+      continue;
+    }
     const value = args.shift();
     if (!value) throw new Error(`Missing value for ${option}.`);
     if (option === "--config") configPath = resolve(value);
     else if (option === "--https-port") httpsPort = portNumber(value);
     else throw new Error(`Unknown option: ${option}`);
   }
+  configPath ||= resolve(root, docker ? "docker-data/config/config.yaml" : "config.yaml");
   const status = JSON.parse(await tailscale(["status", "--json"]));
   let serve = JSON.parse(await tailscale(["serve", "status", "--json"]));
   const urls = connection(status, httpsPort);
@@ -208,6 +264,7 @@ async function main() {
     return;
   }
   validateProfile(config);
+  if (docker) await validateDocker(configPath, config);
   let response;
   try {
     response = await fetch(`${target}/subscriptions/`);

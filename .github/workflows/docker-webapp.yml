@@ -1,0 +1,37 @@
+name: docker-webapp
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Dockerfile', '.dockerignore', 'docker-compose.yml', 'gui/**', 'scripts/**', 'go.mod', 'go.sum', 'cmd/**', 'internal/**', 'sdk/**', '.github/workflows/docker-webapp.yml']
+  pull_request:
+    paths: ['Dockerfile', '.dockerignore', 'docker-compose.yml', 'gui/**', 'scripts/**', 'go.mod', 'go.sum', 'cmd/**', 'internal/**', 'sdk/**', '.github/workflows/docker-webapp.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - run: npm ci --prefix gui
+      - run: npm test --prefix gui
+      - run: npm run typecheck --prefix gui
+      - name: Validate Compose deployment
+        run: |
+          node scripts/setup-subscriptions.mjs --docker
+          docker compose --env-file docker-data/runtime.env config --quiet
+      - name: Build this fork with its embedded dashboard
+        run: docker build --tag subscription-desk:local .
+      - name: Install browser
+        working-directory: gui
+        run: npx playwright install --with-deps chromium
+      - name: Verify Docker APIs, dashboard, and persistent accounts
+        run: python3 scripts/tests/docker-smoke.py --image subscription-desk:local --browser

@@ -1,7 +1,8 @@
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
-    pull_policy: always
+    # Build this checkout, including its embedded subscription dashboard.
+    image: ${CLI_PROXY_IMAGE:-subscription-desk:local}
+    pull_policy: never
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,21 +10,44 @@ services:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
         BUILD_DATE: ${BUILD_DATE:-unknown}
-    container_name: cli-proxy-api
-    # env_file:
-    #   - .env
+    # Linux host networking preserves loopback management checks through Serve.
+    # The private profile binds 127.0.0.1; no LAN or OAuth callback ports are published.
+    network_mode: host
+    user: ${CLI_PROXY_USER:?Run setup-subscriptions.mjs --docker and pass --env-file docker-data/runtime.env}
     environment:
-      DEPLOY: ${DEPLOY:-}
-    ports:
-      - "8317:8317"
-      - "8085:8085"
-      - "1455:1455"
-      - "54545:54545"
-      - "51121:51121"
-      - "11451:11451"
+      HOME: /tmp
+    command: ["./CLIProxyAPI", "--config", "/CLIProxyAPI/config/config.yaml", "--local-model"]
     volumes:
-      - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml
-      - ${CLI_PROXY_AUTH_PATH:-./auths}:/root/.cli-proxy-api
-      - ${CLI_PROXY_LOG_PATH:-./logs}:/CLIProxyAPI/logs
-      - ${CLI_PROXY_PLUGIN_PATH:-./plugins}:/CLIProxyAPI/plugins
+      - type: bind
+        source: ./docker-data/config
+        target: /CLIProxyAPI/config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./docker-data/auths
+        target: /CLIProxyAPI/auths
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./docker-data/logs
+        target: /CLIProxyAPI/logs
+        bind:
+          create_host_path: false
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:${CLI_PROXY_HEALTH_PORT:-8317}/subscriptions/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    init: true
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -5,20 +5,24 @@
 
 # Stop script execution on any error
 $ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
+if (-not (Test-Path "docker-data/runtime.env")) {
+    throw "Run node scripts/setup-subscriptions.mjs --docker on the Linux host first."
+}
 
 # --- Step 1: Choose Environment ---
 Write-Host "Please select an option:"
-Write-Host "1) Run using Pre-built Image (Recommended)"
-Write-Host "2) Build from Source and Run (For Developers)"
+Write-Host "1) Run an existing local image (build it first)"
+Write-Host "2) Build this fork and run (recommended)"
 $choice = Read-Host -Prompt "Enter choice [1-2]"
 
 # --- Step 2: Execute based on choice ---
 switch ($choice) {
     "1" {
-        Write-Host "--- Running with Pre-built Image ---"
-        docker compose up -d --remove-orphans --no-build
-        Write-Host "Services are starting from remote image."
-        Write-Host "Run 'docker compose logs -f' to see the logs."
+        Write-Host "Starting the existing local image."
+        docker compose --env-file docker-data/runtime.env up -d --no-build --pull never
+        Write-Host "Services are starting from the local image."
+        Write-Host "Run 'docker compose --env-file docker-data/runtime.env logs -f' to see the logs."
     }
     "2" {
         Write-Host "--- Building from Source and Running ---"
@@ -35,16 +39,16 @@ switch ($choice) {
         Write-Host "----------------------------------------"
 
         # Build and start the services with a local-only image tag
-        $env:CLI_PROXY_IMAGE = "cli-proxy-api:local"
+        $env:CLI_PROXY_IMAGE = "subscription-desk:local"
         
         Write-Host "Building the Docker image..."
-        docker compose build --build-arg VERSION=$VERSION --build-arg COMMIT=$COMMIT --build-arg BUILD_DATE=$BUILD_DATE
+        docker compose --env-file docker-data/runtime.env build --build-arg VERSION=$VERSION --build-arg COMMIT=$COMMIT --build-arg BUILD_DATE=$BUILD_DATE
 
         Write-Host "Starting the services..."
-        docker compose up -d --remove-orphans --pull never
+        docker compose --env-file docker-data/runtime.env up -d --pull never
 
         Write-Host "Build complete. Services are starting."
-        Write-Host "Run 'docker compose logs -f' to see the logs."
+        Write-Host "Run 'docker compose --env-file docker-data/runtime.env logs -f' to see the logs."
     }
     default {
         Write-Host "Invalid choice. Please enter 1 or 2."
